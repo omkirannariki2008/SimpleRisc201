@@ -1,5 +1,5 @@
-#ifndef SIMPLERISC_CONTROL_UNIT_HPP
-#define SIMPLERISC_CONTROL_UNIT_HPP
+#ifndef SIMPLERISC_VERTICAL_CONTROL_UNIT_HPP
+#define SIMPLERISC_VERTICAL_CONTROL_UNIT_HPP
 
 #include "types.hpp"
 #include "alu.hpp"
@@ -9,7 +9,7 @@
 
 namespace simplerisc {
 
-// Control Signals as detailed in Section 9.7.1 of Smruti Sarangi
+// Microprogrammed Control Signals and Bus Transfer Controls
 struct BusSignals {
     bool pc_out{false};
     bool ir_out{false};
@@ -30,10 +30,10 @@ struct BusSignals {
     ALUOp alu_op{ALUOp::ADD};
 };
 
-class ControlUnit {
+class VerticalControlUnit {
 public:
-    ControlUnit();
-    ~ControlUnit() = default;
+    VerticalControlUnit();
+    ~VerticalControlUnit() = default;
 
     void reset();
 
@@ -60,9 +60,31 @@ public:
     upc_t getUPC() const { return upc_; }
     word_t getSharedBus() const { return shared_bus_; }
 
+    // Telemetry
+    uint64_t getTotalMicroCycles() const { return total_micro_cycles_; }
+    uint64_t getInstructionsRetired() const { return instructions_retired_; }
+    double getMicroCPI() const {
+        return (instructions_retired_ > 0)
+            ? static_cast<double>(total_micro_cycles_) / static_cast<double>(instructions_retired_)
+            : 0.0;
+    }
+
+    // Exception accessors
+    bool hasException() const { return has_exception_; }
+    const std::string& getExceptionMessage() const { return exception_msg_; }
+    addr_t getFaultingPC() const { return faulting_pc_; }
+    upc_t getFaultingUPC() const { return faulting_upc_; }
+    void clearException() {
+        has_exception_ = false;
+        exception_msg_.clear();
+        faulting_pc_ = 0;
+        faulting_upc_ = 0;
+    }
+
     // Inspection
     std::string dumpInternalRegisters() const;
     std::string dumpMicroinstruction(upc_t addr) const;
+    std::string dumpControlState() const;
 
 private:
     void initMicrocode();
@@ -86,8 +108,21 @@ private:
     // Microprogram Memory (Figure 9.24)
     std::vector<MicroInstruction> micro_rom_;
     std::array<upc_t, 32> opcode_switch_table_;
+
+    // Telemetry counters
+    uint64_t total_micro_cycles_{0};
+    uint64_t instructions_retired_{0};
+
+    // Hardware Exception Trapping
+    bool has_exception_{false};
+    std::string exception_msg_;
+    addr_t faulting_pc_{0};
+    upc_t faulting_upc_{0};
 };
+
+// Alias for backwards compatibility
+using ControlUnit = VerticalControlUnit;
 
 } // namespace simplerisc
 
-#endif // SIMPLERISC_CONTROL_UNIT_HPP
+#endif // SIMPLERISC_VERTICAL_CONTROL_UNIT_HPP

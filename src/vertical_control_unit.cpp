@@ -1,15 +1,15 @@
-#include "control_unit.hpp"
+#include "vertical_control_unit.hpp"
 #include <sstream>
 #include <iomanip>
 
 namespace simplerisc {
 
-ControlUnit::ControlUnit() {
+VerticalControlUnit::VerticalControlUnit() {
     initMicrocode();
     reset();
 }
 
-void ControlUnit::reset() {
+void VerticalControlUnit::reset() {
     regs_.fill(0);
     regs_[SP] = 0x00003FFC; // Top of 16KB local memory
     pc_ = TEXT_BASE;
@@ -20,9 +20,19 @@ void ControlUnit::reset() {
     upc_ = 0;
     shared_bus_ = 0;
     signals_ = BusSignals{};
+
+    // Reset telemetry
+    total_micro_cycles_ = 0;
+    instructions_retired_ = 0;
+
+    // Reset exception state
+    has_exception_ = false;
+    exception_msg_.clear();
+    faulting_pc_ = 0;
+    faulting_upc_ = 0;
 }
 
-void ControlUnit::loadProgram(const std::vector<word_t>& words, addr_t start_pc) {
+void VerticalControlUnit::loadProgram(const std::vector<word_t>& words, addr_t start_pc) {
     reset();
     pc_ = start_pc;
     for (size_t i = 0; i < words.size() && (start_pc / 4 + i) < mem_.size(); ++i) {
@@ -30,22 +40,22 @@ void ControlUnit::loadProgram(const std::vector<word_t>& words, addr_t start_pc)
     }
 }
 
-word_t ControlUnit::getRegister(reg_t r) const {
+word_t VerticalControlUnit::getRegister(reg_t r) const {
     if (r < NUM_REGISTERS) return regs_[r];
     return 0;
 }
 
-void ControlUnit::setRegister(reg_t r, word_t val) {
+void VerticalControlUnit::setRegister(reg_t r, word_t val) {
     if (r < NUM_REGISTERS) regs_[r] = val;
 }
 
-word_t ControlUnit::getInternalReg(InternalReg reg) const {
+word_t VerticalControlUnit::getInternalReg(InternalReg reg) const {
     size_t idx = static_cast<size_t>(reg);
     if (idx < NUM_INTERNAL_REGISTERS) return internal_regs_[idx];
     return 0;
 }
 
-void ControlUnit::initMicrocode() {
+void VerticalControlUnit::initMicrocode() {
     micro_rom_.clear();
     opcode_switch_table_.fill(0);
 
@@ -141,6 +151,22 @@ void ControlUnit::initMicrocode() {
     emitAluOp(OP_LSL, ALUOp::LSL);
     emitAluOp(OP_LSR, ALUOp::LSR);
     emitAluOp(OP_ASR, ALUOp::ASR);
+    emitAluOp(OP_FDIV, ALUOp::FDIV);
+
+    // Unary Conversion Routines: I2D, D2I, and NOT
+    auto emitUnaryOp = [&](Opcode op, ALUOp alu_op) {
+        uint16_t start = static_cast<uint16_t>(micro_rom_.size());
+        opcode_switch_table_[op] = start;
+        emitMov(InternalReg::REG_SRC, InternalReg::RS1);
+        emitMov(InternalReg::A, InternalReg::REG_VAL);
+        emitMov(InternalReg::ALU_RESULT, InternalReg::A, static_cast<uint16_t>(alu_op));
+        emitMov(InternalReg::REG_SRC, InternalReg::RD);
+        emitMov(InternalReg::REG_DATA, InternalReg::ALU_RESULT);
+        emitMb(0);
+    };
+    emitUnaryOp(OP_I2D, ALUOp::I2D);
+    emitUnaryOp(OP_D2I, ALUOp::D2I);
+    emitUnaryOp(OP_NOT, ALUOp::NOT);
 
     // CMP
     {
@@ -275,9 +301,13 @@ void ControlUnit::initMicrocode() {
     }
 }
 
-bool ControlUnit::stepMicroCycle() {
+bool VerticalControlUnit::stepMicroCycle() {
+    // Telemetry: count every micro-cycle
+    total_micro_cycles_++;
+
     if (upc_ >= micro_rom_.size()) {
         upc_ = 0;
+        instructions_retired_++;
         return true;
     }
 
@@ -343,14 +373,32 @@ bool ControlUnit::stepMicroCycle() {
                 signals_.alu_op = op;
                 word_t a = internal_regs_[static_cast<size_t>(InternalReg::A)];
                 word_t b = internal_regs_[static_cast<size_t>(InternalReg::B)];
-                ALUResult alu_res = ALU::execute(op, a, b, flags_);
-                shared_bus_ = alu_res.result;
-                internal_regs_[static_cast<size_t>(InternalReg::ALU_RESULT)] = alu_res.result;
+                try {
+                    ALUResult alu_res = ALU::execute(op, a, b, flags_);
+                    shared_bus_ = alu_res.result;
+                    internal_regs_[static_cast<size_t>(InternalReg::ALU_RESULT)] = alu_res.result;
 
-                if (op == ALUOp::CMP) {
-                    internal_regs_[static_cast<size_t>(InternalReg::FLAGS_E)]  = alu_res.flags.E ? 1 : 0;
-                    internal_regs_[static_cast<size_t>(InternalReg::FLAGS_GT)] = alu_res.flags.GT ? 1 : 0;
-                    flags_ = alu_res.flags;
+                    if (op == ALUOp::CMP) {
+                        internal_regs_[static_cast<size_t>(InternalReg::FLAGS_E)]  = alu_res.flags.E ? 1 : 0;
+                        internal_regs_[static_cast<size_t>(InternalReg::FLAGS_GT)] = alu_res.flags.GT ? 1 : 0;
+                        flags_ = alu_res.flags;
+                    }
+                } catch (const SimpleRISCException& ex) {
+                    has_exception_ = true;
+                    exception_msg_ = ex.what();
+                    faulting_pc_ = pc_;
+                    faulting_upc_ = upc_;
+                    upc_ = 0;
+                    instructions_retired_++;
+                    return true;
+                } catch (const std::exception& ex) {
+                    has_exception_ = true;
+                    exception_msg_ = ex.what();
+                    faulting_pc_ = pc_;
+                    faulting_upc_ = upc_;
+                    upc_ = 0;
+                    instructions_retired_++;
+                    return true;
                 }
             } else if (mi.dest == InternalReg::MAR && mi.args == static_cast<uint16_t>(ALUOp::ADD)) {
                 word_t a = internal_regs_[static_cast<size_t>(InternalReg::A)];
@@ -412,10 +460,14 @@ bool ControlUnit::stepMicroCycle() {
     }
 
     upc_ = next_upc;
-    return (upc_ == 0);
+    bool retired = (upc_ == 0);
+    if (retired) {
+        instructions_retired_++;
+    }
+    return retired;
 }
 
-uint32_t ControlUnit::stepInstruction() {
+uint32_t VerticalControlUnit::stepInstruction() {
     uint32_t cycles = 0;
     bool completed = false;
     while (!completed && cycles < 100) {
@@ -425,25 +477,42 @@ uint32_t ControlUnit::stepInstruction() {
     return cycles;
 }
 
-std::string ControlUnit::dumpInternalRegisters() const {
-    std::stringstream ss;
-    ss << "=== INTERNAL REGISTERS (Table 9.7) ===\n";
-    ss << "PC : 0x" << std::hex << std::setw(8) << std::setfill('0') << internal_regs_[0]
-       << " | IR : 0x" << std::setw(8) << internal_regs_[1]
-       << " | I_BIT : " << internal_regs_[2] << "\n";
-    ss << "RD : r" << std::dec << internal_regs_[3]
-       << " | RS1 : r" << internal_regs_[4]
-       << " | RS2 : r" << internal_regs_[5]
-       << " | IMMX : 0x" << std::hex << internal_regs_[6] << "\n";
-    ss << "A  : 0x" << std::hex << std::setw(8) << internal_regs_[11]
-       << " | B  : 0x" << std::setw(8) << internal_regs_[12]
-       << " | ALU_RESULT : 0x" << std::setw(8) << internal_regs_[15] << "\n";
-    ss << "FLAGS: [E=" << internal_regs_[13] << " GT=" << internal_regs_[14] << "]\n";
-    ss << "uPC: " << std::dec << upc_ << " | Shared Bus: 0x" << std::hex << shared_bus_ << "\n";
-    return ss.str();
+std::string VerticalControlUnit::dumpInternalRegisters() const {
+    std::ostringstream oss;
+    oss << "\n+-----------------------------------------------------------------------------+\n";
+    oss << "|          VERTICAL MICROPROGRAMMED DATA-PATH REGISTERS (Table 9.7)           |\n";
+    oss << "+-----------------------------------------------------------------------------+\n";
+
+    std::ostringstream l1;
+    l1 << "PC  : " << toHex8(internal_regs_[0])
+       << " | IR : " << toHex8(internal_regs_[1])
+       << " | I_BIT: " << internal_regs_[2]
+       << " | uPC: " << std::dec << std::setw(3) << upc_;
+    oss << "|  " << std::left << std::setw(73) << l1.str() << " |\n";
+
+    std::ostringstream l2;
+    l2 << "RD  : r" << std::dec << std::setw(2) << std::left << internal_regs_[3]
+       << " | RS1: r" << std::setw(2) << internal_regs_[4]
+       << " | RS2: r" << std::setw(2) << internal_regs_[5]
+       << " | IMMX: " << toHex8(internal_regs_[6]);
+    oss << "|  " << std::left << std::setw(73) << l2.str() << " |\n";
+
+    std::ostringstream l3;
+    l3 << "A   : " << toHex8(internal_regs_[11])
+       << " | B  : " << toHex8(internal_regs_[12])
+       << " | ALU_OUT: " << toHex8(internal_regs_[15]);
+    oss << "|  " << std::left << std::setw(73) << l3.str() << " |\n";
+
+    std::ostringstream l4;
+    l4 << "FLAGS: [E=" << internal_regs_[13] << " GT=" << internal_regs_[14] << "]"
+       << " | Shared Bus: " << toHex8(shared_bus_)
+       << " | Control Word: 45 bits";
+    oss << "|  " << std::left << std::setw(73) << l4.str() << " |\n";
+    oss << "+-----------------------------------------------------------------------------+\n";
+    return oss.str();
 }
 
-std::string ControlUnit::dumpMicroinstruction(upc_t addr) const {
+std::string VerticalControlUnit::dumpMicroinstruction(upc_t addr) const {
     if (addr >= micro_rom_.size()) return "INVALID_UPC";
     const MicroInstruction& mi = micro_rom_[addr];
     std::stringstream ss;
@@ -459,6 +528,31 @@ std::string ControlUnit::dumpMicroinstruction(upc_t addr) const {
         case MicroOp::MB:       ss << "mb -> target " << mi.branch_target; break;
     }
     return ss.str();
+}
+
+std::string VerticalControlUnit::dumpControlState() const {
+    std::ostringstream oss;
+    oss << "\n+-----------------------------------------------------------------------------+\n";
+    oss << "|                 VERTICAL MICROPROGRAMMED CONTROL UNIT STATE                 |\n";
+    oss << "+-----------------------------------------------------------------------------+\n";
+    std::ostringstream l1;
+    l1 << "uPC: " << std::dec << std::setw(3) << upc_
+       << " | PC: " << toHex8(pc_)
+       << " | Bus: " << toHex8(shared_bus_)
+       << " | Total uCycles: " << std::dec << total_micro_cycles_;
+    oss << "|  " << std::left << std::setw(73) << l1.str() << " |\n";
+
+    std::ostringstream l2;
+    l2 << "Flags: [E=" << flags_.E << " GT=" << flags_.GT << " C=" << flags_.C << " V=" << flags_.V << "]"
+       << " | Instructions Retired: " << std::dec << instructions_retired_;
+    oss << "|  " << std::left << std::setw(73) << l2.str() << " |\n";
+
+    std::ostringstream l3;
+    l3 << "Micro-CPI: " << std::fixed << std::setprecision(2) << getMicroCPI()
+       << " | Control Word Width: 45 bits (Encoded, Gate Decode Required)";
+    oss << "|  " << std::left << std::setw(73) << l3.str() << " |\n";
+    oss << "+-----------------------------------------------------------------------------+\n";
+    return oss.str();
 }
 
 } // namespace simplerisc
