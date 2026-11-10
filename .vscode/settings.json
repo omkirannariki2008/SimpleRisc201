@@ -1,8 +1,13 @@
 {
   "C_Cpp.default.includePath": [
-    "${workspaceFolder}/include"
+    "${workspaceFolder}/include",
+    "${workspaceFolder}/src",
+    "${workspaceFolder}/**"
   ],
+  "C_Cpp.default.compilerPath": "/usr/bin/g++",
   "C_Cpp.default.cppStandard": "c++14",
+  "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json",
   "files.associations": {
     "*.hpp": "cpp",
     "*.s": "arm"

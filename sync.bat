@@ -13,7 +13,7 @@ if %ERRORLEVEL% NEQ 0 (
 echo.
 echo [SUCCESS] Codebase is up to date with GitHub!
 echo Rebuilding project...
-g++ -std=c++14 -Wall -Wextra -O2 -I include src/alu.cpp src/control_unit.cpp src/cpu_pipeline.cpp src/assembler.cpp src/main.cpp -o simplerisc_sim.exe
+g++ -std=c++14 -Wall -Wextra -O2 -I include src/alu.cpp src/vertical_control_unit.cpp src/horizontal_control_unit.cpp src/cpu_pipeline.cpp src/assembler.cpp src/disassembler.cpp src/stack_preprocessor.cpp src/exception_framework.cpp src/stack_visualizer.cpp src/debugger_cli.cpp src/main.cpp -o simplerisc_sim.exe
 if %ERRORLEVEL% EQU 0 (
     echo [SUCCESS] Build succeeded! Executable: simplerisc_sim.exe
 ) else (

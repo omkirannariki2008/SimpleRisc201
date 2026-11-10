@@ -6,7 +6,7 @@ This guide outlines how to set up your team workspace and collaborate across dif
 
 ## 1. 👥 Adding Friends to the GitHub Repository
 
-1. Go to your repository on GitHub: `https://github.com/vaibhavc-coder/SimpleRisc201`.
+1. Go to your repository on GitHub: `https://github.com/omkirannariki2008/SimpleRisc201`.
 2. Click **Settings** (tab at the top right of the repo).
 3. In the left sidebar, click **Collaborators** (under *Access*).
 4. Click the green **Add people** button.
@@ -22,7 +22,7 @@ On each friend's laptop:
 ### Step 1: Clone the Repository
 Open a terminal (PowerShell, Command Prompt, or bash) and run:
 ```bash
-git clone https://github.com/vaibhavc-coder/SimpleRisc201.git
+git clone https://github.com/omkirannariki2008/SimpleRisc201.git
 cd SimpleRisc201
 ```
 
@@ -41,7 +41,7 @@ g++ --version
 - **Shortcut in VS Code:** Press `Ctrl+Shift+B` (Windows/Linux) or `Cmd+Shift+B` (Mac) to build.
 - **Manual Build:**
   ```bash
-  g++ -std=c++14 -O2 -I include src/alu.cpp src/control_unit.cpp src/assembler.cpp src/main.cpp -o eval1_demo.exe
+  g++ -std=c++14 -O2 -I include src/alu.cpp src/vertical_control_unit.cpp src/horizontal_control_unit.cpp src/assembler.cpp src/main.cpp -o eval1_demo.exe
   ./eval1_demo.exe
   ```
 

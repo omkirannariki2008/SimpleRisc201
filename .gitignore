@@ -19,12 +19,21 @@ obj/
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/settings.json
+compile_commands.json
+.clangd/
+.clangd
 .vs/
 .idea/
 *.swp
 *~
 
-# OS generated files
+# Course references and PDFs
+reference/
+reference project/
+*.pdf
+
+# OS & Shell generated files
 .DS_Store
 Thumbs.db
 desktop.ini
+NUL
